@@ -215,7 +215,7 @@ call_attach(#wsdl{operations = Operations, model = Model},
 		    HttpHeaders = [],
 		    HttpClientOptions = [],
                     ?dbg("+++ Request = ~p~n", [Request]),
-		    HttpRes = http_request(URL, SoapAction, Request,
+		    HttpRes = http_request(URL, SoapAction, unicode:characters_to_binary(Request),
                                            HttpClientOptions, HttpHeaders,
                                            ContentType),
                     ?dbg("+++ HttpRes = ~p~n", [HttpRes]),
@@ -405,6 +405,19 @@ get_url_file("http://"++_ = URL) ->
                                    [?MODULE, Reason]),
 	    {error, "failed to retrieve: "++URL}
     end;
+get_url_file("https://"++_ = URL) ->
+    case httpc:request(URL) of
+	{ok,{{_HTTP,200,_OK}, _Headers, Body}} ->
+	    {ok, Body};
+	{ok,{{_HTTP,RC,Emsg}, _Headers, _Body}} ->
+	    error_logger:error_msg("~p: http-request got: ~p~n",
+                                   [?MODULE, {RC, Emsg}]),
+	    {error, "failed to retrieve: "++URL};
+	{error, Reason} ->
+	    error_logger:error_msg("~p: http-request failed: ~p~n",
+                                   [?MODULE, Reason]),
+	    {error, "failed to retrieve: "++URL}
+    end;
 get_url_file("file://"++Fname) ->
     {ok, Bin} = file:read_file(Fname),
     {ok, binary_to_list(Bin)};
@@ -433,7 +446,12 @@ inets_request(URL, SoapAction, Request, Options, Headers, ContentType) ->
     NHeaders = [{"SOAPAction", SoapAction}|Headers],
     NewHeaders = case proplists:get_value("Host", NHeaders) of
                      undefined ->
-                         [{"Host", "localhost:8800"}|NHeaders];
+						Host = case yaws_api:parse_url(URL) of
+							{url,http,HttpDomain,_,_,_} -> HttpDomain;
+							{url,https,HttpsDomain,_,_,_} -> HttpsDomain;
+							_ -> "localhost:8800"
+						end,
+                         [{"Host", Host}|NHeaders];
                      _ ->
                          NHeaders
                  end,
@@ -443,7 +461,7 @@ inets_request(URL, SoapAction, Request, Options, Headers, ContentType) ->
                        {URL,NewHeaders,
                         ContentType,
                         Request},
-                       [{timeout,?HTTP_REQ_TIMEOUT}],
+                       [{ssl, [{verify, 0}]}, {timeout,?HTTP_REQ_TIMEOUT}],
                        [{sync, true}, {full_result, true},
                         {body_format, string}]) of
         {ok,{{_HTTP,200,_OK},ResponseHeaders,ResponseBody}} ->
